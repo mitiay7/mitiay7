@@ -47,10 +47,22 @@ def outside_tags(fragment, fn):
 
 
 def marks(fragment):
+    """Turn the three mark characters into styled dots that stay attached to the neighbouring text."""
     def one(text):
-        for ch, (cls, label) in MARKS.items():
-            text = text.replace(ch, f'<span class="mk mk-{cls}" role="img" aria-label="{label}" title="{label}"></span>')
-        return text
+        def dot(m):
+            cls, label = MARKS[m.group(2)]
+            glue = "\u00a0" if m.group(1) else ""
+            return (f'{glue}<span class="nb"><span class="mk mk-{cls}" role="img" aria-label="{label}" '
+                    f'title="{label}"></span>{m.group(3)}</span>')
+        return re.sub(r"( ?)([✅◐○])([.,;:)]?)", dot, text)
+    return outside_tags(fragment, one)
+
+
+def nbsp(fragment):
+    """Keep digit groups and a number with its unit on one line."""
+    def one(text):
+        text = re.sub(r"(?<=\d) (?=\d{3}(?!\d))", "\u202f", text)
+        return re.sub(r"(?<=\d) (?=(?:₽|%|тыс\.|млн|млрд|руб\.))", "\u00a0", text)
     return outside_tags(fragment, one)
 
 
@@ -72,7 +84,7 @@ def tables(fragment):
 
 def convert(md):
     body = markdown.markdown(prep(md), extensions=["tables", "sane_lists"])
-    return tables(marks(body)).replace("<hr />", "")
+    return tables(nbsp(marks(body))).replace("<hr />", "")
 
 
 def plain(fragment):
@@ -170,12 +182,18 @@ def build_plain(name, prefix):
     md = (SRC / name).read_text()
     md = re.sub(r"^# .*\n", "", md)
     frag = autolink(convert(md))
-    n = {"i": 0}
+    n = {"h2": 0, "h3": 0}
 
-    def h2(m):
-        n["i"] += 1
-        return f'<h2 id="{prefix}-{n["i"]}" data-toc="1">{m.group(1)}</h2>'
-    return re.sub(r"<h2>(.*?)</h2>", h2, frag, flags=re.S)
+    def head(m):
+        level, inner = m.group(1), m.group(2)
+        if level == "2":
+            n["h2"] += 1
+            n["h3"] = 0
+            return f'<h2 id="{prefix}-{n["h2"]}" data-toc="1">{inner}</h2>'
+        n["h3"] += 1
+        label = re.split(r" — | - ", plain(inner))[0]
+        return f'<h3 id="{prefix}-{n["h2"]}-{n["h3"]}" data-toc="2" data-label="{html.escape(label)}">{inner}</h3>'
+    return re.sub(r"<h([23])>(.*?)</h\1>", head, frag, flags=re.S)
 
 
 TEMPLATE = (HERE / "template.html").read_text()
